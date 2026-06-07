@@ -71,3 +71,20 @@ CI runs this on every push; the publish job is gated on it.
 Generated once at first server start, persisted in the `shared-keys`
 docker volume.  Public key lives at `/shared/keys/cache-pub-key.pem` on
 the server; copy that value into the consumer's `trusted-public-keys`.
+
+## `nixbuild` authorized_keys
+
+Rebuilt fresh on every boot — never appended in place — from three
+sources, deduped (`sort -u`):
+
+1. `$KEY_DIR/id_ed25519.pub` (the auto-generated key the verifier uses)
+2. `$AUTHORIZED_KEYS` env var, one pubkey per line
+3. Every `*.pub` under `/shared/authorized_keys.d/`
+
+The bundled `docker-compose.yml` forwards `AUTHORIZED_KEYS` through to
+the container.  To remove a key, drop it from the env / directory and
+restart the container — there is no in-place "remove key" path.
+
+If you change the entrypoint's authorized_keys logic, make sure the
+auto-generated key still ends up first so the verifier keeps working
+without operator setup.
