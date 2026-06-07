@@ -1,0 +1,31 @@
+# Dependabot opens PRs against `main` when a newer image / action version
+# is available.  Each PR triggers the verify job in build.yml, so a broken
+# bump can never merge unnoticed.
+version: 2
+updates:
+  # Server image: nixos/nix base
+  - package-ecosystem: "docker"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(server)"
+
+  # Verifier image: nixos/nix base (kept in lock-step with server)
+  - package-ecosystem: "docker"
+    directory: "/verifier"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(verifier)"
+
+  # Reusable actions in build.yml
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(ci)"

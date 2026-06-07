@@ -4,7 +4,7 @@
 #   sshd       : root, accepts only `nixbuild` user
 #   nix-serve  : runs as `nixbuild`  (non-root)
 #   builds    : sandboxed under nixbld* system users via nix-daemon
-FROM docker.io/nixos/nix:2.24.10
+FROM docker.io/nixos/nix:2.34.7
 
 COPY nix.conf /etc/nix/nix.conf
 
