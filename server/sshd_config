@@ -1,0 +1,22 @@
+Port 22
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+UsePAM no
+PermitRootLogin no
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile %h/.ssh/authorized_keys
+AllowUsers nixbuild
+
+PidFile /var/run/sshd.pid
+LogLevel INFO
+
+# Volume mounts can mangle perms; we still require pubkey auth so this is safe.
+StrictModes no
+
+# Make Nix tools visible to non-interactive ssh sessions (ssh-ng builds need
+# `nix-daemon` on PATH when sshd execs the command).
+SetEnv PATH=/usr/local/bin:/usr/bin:/bin
