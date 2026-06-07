@@ -75,6 +75,40 @@ volumes:
 > The package is private until visibility is flipped on the GitHub
 > Packages page.  Until then, `docker login ghcr.io` first.
 
+### Bring your own SSH key
+
+By default the server generates a key for `nixbuild` on first start so
+the verifier can authenticate out of the box.  Any additional pubkeys you
+provide are **appended** to `nixbuild`'s `authorized_keys` on every boot
+(then deduped) — useful when you'd rather let NixOS clients log in with
+keys they already control.
+
+**1. Inline via `AUTHORIZED_KEYS` env** (newline-separated, one pubkey per line):
+
+```sh
+AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d nix-builder
+```
+
+The bundled `docker-compose.yml` already forwards this env to the container.
+With raw `docker run`, pass `-e AUTHORIZED_KEYS=...`.
+
+**2. Mount a directory of `*.pub` files** at `/shared/authorized_keys.d/`:
+
+```sh
+mkdir -p ./team-keys
+cp ~/.ssh/id_ed25519.pub ./team-keys/me.pub      # add as many as you want
+
+docker run -d --name nix-cache-builder \
+  -p 2222:22 -p 5000:5000 \
+  -v nix-cache-builder-store:/nix \
+  -v nix-cache-builder-keys:/shared/keys \
+  -v $(pwd)/team-keys:/shared/authorized_keys.d:ro \
+  ghcr.io/ly4096x/nix-cache-builder:latest
+```
+
+Restart the container after changing keys; `authorized_keys` is rebuilt
+on each boot.
+
 ### Verify it actually builds and caches
 
 ```sh

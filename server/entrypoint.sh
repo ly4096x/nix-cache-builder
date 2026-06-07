@@ -35,8 +35,32 @@ if [ ! -f "$KEY_DIR/id_ed25519" ]; then
     ssh-keygen -t ed25519 -N "" -f "$KEY_DIR/id_ed25519" \
         -C "remote-builder@$CACHE_NAME" >/dev/null
 fi
-install -m 600 -o nixbuild -g nixbuild \
-    "$KEY_DIR/id_ed25519.pub" /home/nixbuild/.ssh/authorized_keys
+# Rebuilt from scratch every boot from the generated key plus any keys
+# the operator supplied (env var and/or mounted directory).
+AUTH_KEYS=/home/nixbuild/.ssh/authorized_keys
+: > "$AUTH_KEYS"
+cat "$KEY_DIR/id_ed25519.pub" >> "$AUTH_KEYS"
+
+# Inline pubkeys via AUTHORIZED_KEYS env (one per line; ignore blanks)
+if [ -n "${AUTHORIZED_KEYS:-}" ]; then
+    printf '%s\n' "$AUTHORIZED_KEYS" | sed '/^[[:space:]]*$/d' >> "$AUTH_KEYS"
+fi
+
+# Mount-in pubkeys: any *.pub under /shared/authorized_keys.d
+USER_AUTH_DIR=/shared/authorized_keys.d
+if [ -d "$USER_AUTH_DIR" ]; then
+    for f in "$USER_AUTH_DIR"/*.pub; do
+        [ -r "$f" ] || continue
+        cat "$f" >> "$AUTH_KEYS"
+        printf '\n' >> "$AUTH_KEYS"
+        echo "[init] added authorized_keys from $f"
+    done
+fi
+
+# Dedup, fix perms, normalize ownership.
+sort -u "$AUTH_KEYS" -o "$AUTH_KEYS"
+chown nixbuild:nixbuild "$AUTH_KEYS"
+chmod 600 "$AUTH_KEYS"
 
 # 3. SSH host keys
 for type in rsa ecdsa ed25519; do

@@ -21,6 +21,11 @@ services:
     volumes:
       - nix-store:/nix
       - shared-keys:/shared/keys
+    environment:
+      # Pubkeys appended to nixbuild's authorized_keys (one per line):
+      #   AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d
+      # Or mount a directory of *.pub files at /shared/authorized_keys.d.
+      AUTHORIZED_KEYS: ${AUTHORIZED_KEYS:-}
     restart: unless-stopped
 
   verifier:
