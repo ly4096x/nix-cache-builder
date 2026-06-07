@@ -40,15 +40,37 @@ on the host:
 
 ### Use the prebuilt GHCR image instead
 
-Edit `docker-compose.yml`, drop the `build:` block and change `image:`:
+The image is just the server; you still need the two named volumes (so
+the store and the generated cache/SSH keys survive container recreation)
+and the port mappings.  Self-contained `docker run`:
+
+```sh
+docker run -d --name nix-cache-builder \
+  -p 2222:22 -p 5000:5000 \
+  -v nix-cache-builder-store:/nix \
+  -v nix-cache-builder-keys:/shared/keys \
+  --restart unless-stopped \
+  ghcr.io/ly4096x/nix-cache-builder:latest
+```
+
+…or as a standalone `docker-compose.yml`:
 
 ```yaml
 services:
   nix-builder:
     image: ghcr.io/ly4096x/nix-cache-builder:latest
-```
+    ports:
+      - "2222:22"
+      - "5000:5000"
+    volumes:
+      - nix-store:/nix
+      - shared-keys:/shared/keys
+    restart: unless-stopped
 
-Then `docker compose pull && docker compose up -d nix-builder`.
+volumes:
+  nix-store:
+  shared-keys:
+```
 
 > The package is private until visibility is flipped on the GitHub
 > Packages page.  Until then, `docker login ghcr.io` first.
