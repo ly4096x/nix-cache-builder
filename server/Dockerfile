@@ -15,6 +15,13 @@ COPY nix.conf /etc/nix/nix.conf
 COPY install-packages.sh /install-packages.sh
 RUN chmod +x /install-packages.sh && \
     /install-packages.sh && \
+    # Drop the nixpkgs channel source (~640 MB) from the image — the
+    # closure of the packages we actually use is already in the store,
+    # and install-packages.sh re-adds + re-fetches the channel at
+    # runtime self-heal time when it needs to install something new.
+    /root/.nix-profile/bin/nix-channel --remove nixpkgs && \
+    rm -f /nix/var/nix/profiles/per-user/root/channels \
+          /nix/var/nix/profiles/per-user/root/channels-*-link && \
     { nix-collect-garbage -d >/dev/null 2>&1 || true; }
 
 # Expose nix-installed binaries on the global PATH so non-interactive ssh

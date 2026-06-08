@@ -11,11 +11,17 @@
 # Adding or removing a package means editing only this file.
 set -euo pipefail
 
-# Make sure the base image's `nixpkgs` channel is actually unpacked
-# before nix-env tries to resolve attributes from it.  The image leaves
-# the channel subscribed but with no fetched contents, so the very
-# first nix-env -iA in a fresh root profile would 404 with
-# "attribute 'nixpkgs' ... not found".
+# Make sure the `nixpkgs` channel is subscribed and unpacked before
+# nix-env tries to resolve attributes from it.
+#
+# The base image leaves the channel subscribed but never fetched, and
+# the Dockerfile deletes the channel after image build (to drop
+# ~640 MB of nixpkgs source from the image).  Re-adding is idempotent
+# so this works in all three cases: image build, runtime self-heal
+# right after a fresh container start, and runtime self-heal after an
+# image upgrade.
+/root/.nix-profile/bin/nix-channel --add \
+    https://channels.nixos.org/nixpkgs-unstable nixpkgs >&2
 /root/.nix-profile/bin/nix-channel --update >&2
 
 exec /root/.nix-profile/bin/nix-env -iA \
