@@ -21,7 +21,7 @@ mkdir -p "$KEY_DIR" /run
 # -> missing-in-volume).  Detect by walking the critical tools; if any
 # don't resolve to an executable file, re-run install-packages.sh so
 # the missing packages land in the volume's nix profile.
-for tool in supervisord nix-serve nix-daemon sshd ssh-keygen nix-store sort pkill; do
+for tool in s6-svscan s6-setuidgid harmonia-cache nix-daemon sshd ssh-keygen nix-store sort; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "[init] $tool missing — /nix volume is stale relative to image, running install-packages.sh"
         /install-packages.sh
@@ -89,10 +89,9 @@ for type in rsa ecdsa ed25519; do
     chmod 644 "$HOST_KEY_DIR/ssh_host_${type}_key.pub"
 done
 
-# 4. Hand off to supervisord, which runs nix-daemon, nix-serve and sshd
-#    (priorities ordered so nix-daemon starts first; nix-serve waits on
-#    the daemon socket before launching).  supervisord becomes PID 1,
-#    reaps zombies, restarts crashed children, and forwards SIGTERM to
-#    each program on container stop.
-echo "[start] supervisord"
-exec /usr/local/bin/supervisord -c /etc/supervisord.conf
+# 4. Hand off to s6-svscan, which runs nix-daemon, harmonia and sshd
+#    from /etc/s6/sv/.  Each service's run script is a single 'exec',
+#    so s6-svscan owns PID directly and restarts crashes automatically.
+#    SIGTERM to s6-svscan stops the whole tree cleanly.
+echo "[start] s6-svscan"
+exec /usr/local/bin/s6-svscan /etc/s6/sv

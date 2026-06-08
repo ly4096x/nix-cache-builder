@@ -57,10 +57,22 @@ RUN for f in passwd group shadow; do \
 RUN mkdir -p /etc/ssh /var/run/sshd /var/empty && \
     chmod 711 /var/empty
 
+# s6-setuidgid's getpwnam/getgrouplist abort with "No such file or
+# directory" if nsswitch.conf is missing — the nixos/nix base doesn't
+# ship one.  A minimal files-only nsswitch.conf is enough since the
+# only users we ever resolve come from /etc/{passwd,group}.
+RUN printf '%s\n' \
+        'passwd: files' \
+        'group: files' \
+        'shadow: files' \
+        'hosts: files dns' \
+    > /etc/nsswitch.conf
+
 COPY sshd_config /etc/ssh/sshd_config
-COPY supervisord.conf /etc/supervisord.conf
+COPY harmonia.toml /etc/harmonia.toml
+COPY s6/ /etc/s6/sv/
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh /etc/s6/sv/*/run
 
 EXPOSE 22 5000
 

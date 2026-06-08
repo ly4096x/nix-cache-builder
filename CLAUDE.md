@@ -27,15 +27,20 @@ Ports on the host: `2222` (ssh-ng) and `5000` (nix-serve HTTP).
 - **Single container for builder + cache.**  nix-daemon owns `/nix/store`
   and nix-serve reads from it directly, so co-locating avoids a second
   store and double signing.
-- **`nixbuild` is non-root.**  sshd accepts only this user; nix-serve is
-  launched by supervisord with `user=nixbuild` (no PAM/setpriv shim);
-  actual build processes are still sandboxed under the base image's
-  `nixbld*` system users via nix-daemon.
-- **supervisord is PID 1.**  `server/supervisord.conf` defines three
-  programs (`nix-daemon`, `nix-serve`, `sshd`) with `autorestart=true`.
-  `entrypoint.sh` only does init (key generation, authorized_keys
-  rebuild) then `exec`s supervisord.  Child stdout/stderr is routed to
-  `/dev/fd/{1,2}` so `docker logs` sees everything.
+- **`nixbuild` is non-root.**  sshd accepts only this user; harmonia is
+  launched by s6 via `s6-setuidgid nixbuild`; actual build processes
+  are still sandboxed under the base image's `nixbld*` system users
+  via nix-daemon.
+- **s6-svscan is PID 1.**  `server/s6/{nix-daemon,harmonia,sshd}/run`
+  are the three supervised services; s6-svscan restarts crashes
+  automatically and forwards SIGTERM to the whole tree.  `entrypoint.sh`
+  only does init (key generation, authorized_keys rebuild) then `exec`s
+  `s6-svscan /etc/s6/sv`.  Child stdout/stderr inherit from svscan so
+  `docker logs` sees everything in one stream.
+- **harmonia (Rust) replaces nix-serve (Perl).**  Drop-in HTTP API
+  compatibility — same `/nix-cache-info`, `/<hash>.narinfo`, and
+  `/nar/<hash>.nar` shape, same signing-key format.  Single async
+  process, no prefork workers, no orphan-on-master-SIGKILL footgun.
 - **SSH alias indirection** in the consuming NixOS config (`nix.buildMachines`
   references an alias rather than a literal `host:port`) — lets the
   container move local↔remote with a one-line change.
@@ -47,10 +52,11 @@ same script also runs from `entrypoint.sh` as a self-heal step on cold
 start: when the user reuses a persistent `/nix` volume that was
 populated by a previous image build, the new image's `/usr/local/bin`
 symlinks point at store paths the volume doesn't contain.  The
-entrypoint walks a list of critical tools (`supervisord`, `nix-serve`,
-`nix-daemon`, `sshd`, `ssh-keygen`, `nix-store`, `sort`, `pkill`); if
-any fail `command -v`, it re-runs `install-packages.sh` so the missing
-packages land in the volume's nix profile.
+entrypoint walks a list of critical tools (`s6-svscan`,
+`s6-setuidgid`, `harmonia-cache`, `nix-daemon`, `sshd`, `ssh-keygen`,
+`nix-store`, `sort`); if any fail `command -v`, it re-runs
+`install-packages.sh` so the missing packages land in the volume's
+nix profile.
 
 Important detail: `install-packages.sh` runs `nix-channel --update`
 first.  The nixos/nix base image leaves the `nixpkgs` channel

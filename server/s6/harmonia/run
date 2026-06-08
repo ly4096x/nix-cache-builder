@@ -1,0 +1,13 @@
+#!/bin/sh
+exec 2>&1
+
+# nix-daemon owns /nix/store and the socket harmonia's nix-store
+# queries go through; wait for it before dropping to nixbuild.
+until [ -S /nix/var/nix/daemon-socket/socket ]; do sleep 0.25; done
+
+exec /usr/local/bin/s6-setuidgid nixbuild \
+    /usr/local/bin/env \
+        PATH=/usr/local/bin:/root/.nix-profile/bin \
+        HOME=/home/nixbuild \
+        CONFIG_FILE=/etc/harmonia.toml \
+    /usr/local/bin/harmonia-cache

@@ -1,0 +1,4 @@
+#!/bin/sh
+# s6-svscan runs this; restart-on-exit is automatic.
+exec 2>&1
+exec /usr/local/bin/nix-daemon

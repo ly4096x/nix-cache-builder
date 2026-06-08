@@ -1,0 +1,7 @@
+# harmonia (binary cache server) config.
+# Read at start from $CONFIG_FILE in /etc/s6/sv/harmonia/run.
+
+bind = "0.0.0.0:5000"
+priority = 30
+
+sign_key_paths = ["/shared/keys/cache-priv-key.pem"]

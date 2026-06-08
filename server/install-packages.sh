@@ -26,12 +26,11 @@ set -euo pipefail
 
 exec /root/.nix-profile/bin/nix-env -iA \
     nixpkgs.openssh \
-    nixpkgs.nix-serve \
-    nixpkgs.python3Packages.supervisor \
-    nixpkgs.procps \
+    nixpkgs.harmonia \
+    nixpkgs.s6 \
+    nixpkgs.execline \
     nixpkgs.bash \
     nixpkgs.shadow \
-    nixpkgs.util-linux \
     nixpkgs.coreutils \
     nixpkgs.gnused \
     nixpkgs.gnugrep
