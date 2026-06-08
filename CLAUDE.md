@@ -27,9 +27,15 @@ Ports on the host: `2222` (ssh-ng) and `5000` (nix-serve HTTP).
 - **Single container for builder + cache.**  nix-daemon owns `/nix/store`
   and nix-serve reads from it directly, so co-locating avoids a second
   store and double signing.
-- **`nixbuild` is non-root.**  sshd accepts only this user; nix-serve runs
-  as it (dropped via `setpriv`); actual build processes are still sandboxed
-  under the base image's `nixbld*` system users via nix-daemon.
+- **`nixbuild` is non-root.**  sshd accepts only this user; nix-serve is
+  launched by supervisord with `user=nixbuild` (no PAM/setpriv shim);
+  actual build processes are still sandboxed under the base image's
+  `nixbld*` system users via nix-daemon.
+- **supervisord is PID 1.**  `server/supervisord.conf` defines three
+  programs (`nix-daemon`, `nix-serve`, `sshd`) with `autorestart=true`.
+  `entrypoint.sh` only does init (key generation, authorized_keys
+  rebuild) then `exec`s supervisord.  Child stdout/stderr is routed to
+  `/dev/fd/{1,2}` so `docker logs` sees everything.
 - **SSH alias indirection** in the consuming NixOS config (`nix.buildMachines`
   references an alias rather than a literal `host:port`) — lets the
   container move local↔remote with a one-line change.

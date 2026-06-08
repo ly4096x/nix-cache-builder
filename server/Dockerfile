@@ -13,13 +13,15 @@ COPY nix.conf /etc/nix/nix.conf
 RUN nix-env -iA \
         nixpkgs.openssh \
         nixpkgs.nix-serve \
+        nixpkgs.python3Packages.supervisor \
+        nixpkgs.procps \
         nixpkgs.bash \
         nixpkgs.shadow \
         nixpkgs.util-linux \
         nixpkgs.coreutils \
         nixpkgs.gnused \
         nixpkgs.gnugrep \
-    && nix-collect-garbage -d >/dev/null 2>&1 || true
+    && { nix-collect-garbage -d >/dev/null 2>&1 || true; }
 
 # Expose nix-installed binaries on the global PATH so non-interactive ssh
 # sessions (sshd execs nix-daemon for ssh-ng builds) can find them.
@@ -55,6 +57,7 @@ RUN mkdir -p /etc/ssh /var/run/sshd /var/empty && \
     chmod 711 /var/empty
 
 COPY sshd_config /etc/ssh/sshd_config
+COPY supervisord.conf /etc/supervisord.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

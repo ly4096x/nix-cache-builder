@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# Bring up multi-user nix-daemon, sshd (for ssh-ng remote builds) and
-# nix-serve (binary cache HTTP) in one container.
-#
-#   - nix-daemon runs as root (required to own /nix/store and spawn nixbld*
-#     sandbox users).
-#   - sshd accepts only the unprivileged `nixbuild` user; remote builds run
-#     through nix-daemon over the daemon socket.
-#   - nix-serve runs as the unprivileged `nixbuild` user.
+# Init for the nix-cache-builder container:
+#   1. generate / refresh keys under /shared/keys (the nix-builder-keys volume)
+#   2. rebuild /home/nixbuild/.ssh/authorized_keys from the operator inputs
+#   3. hand off to supervisord, which actually runs nix-daemon, nix-serve
+#      and sshd (definitions in /etc/supervisord.conf).
 set -euo pipefail
 
 # Make nix-installed tools (su, sshd, ssh-keygen, nix-serve, ...) visible.
@@ -15,7 +12,7 @@ export PATH=/usr/local/bin:/root/.nix-profile/bin:${PATH:-/usr/bin:/bin}
 KEY_DIR=/shared/keys
 CACHE_NAME="${CACHE_NAME:-nix-cache-builder-1}"
 
-mkdir -p "$KEY_DIR"
+mkdir -p "$KEY_DIR" /run
 
 # 1. Binary-cache signing key (persisted across restarts via shared volume)
 if [ ! -f "$KEY_DIR/cache-priv-key.pem" ]; then
@@ -77,40 +74,10 @@ for type in rsa ecdsa ed25519; do
     chmod 644 "$HOST_KEY_DIR/ssh_host_${type}_key.pub"
 done
 
-# 4. nix-daemon (root) — provides the /nix/var/nix/daemon-socket socket that
-#    nixbuild and other unprivileged users talk to.
-echo "[start] nix-daemon"
-nix-daemon &
-DAEMON_PID=$!
-
-for _ in $(seq 1 60); do
-    [ -S /nix/var/nix/daemon-socket/socket ] && break
-    sleep 0.25
-done
-[ -S /nix/var/nix/daemon-socket/socket ] || {
-    echo "ERROR: nix-daemon socket did not appear"
-    exit 1
-}
-
-# 5. nix-serve (non-root) — HTTP binary cache backed by the local store.
-# `setpriv` (util-linux) drops to the build user without PAM, which the
-# scratch-built nix image doesn't ship.
-echo "[start] nix-serve on :5000 (user=nixbuild)"
-setpriv --reuid=nixbuild --regid=nixbuild --init-groups \
-    --inh-caps=-all -- env \
-        PATH=/usr/local/bin:/root/.nix-profile/bin \
-        HOME=/home/nixbuild \
-        NIX_SECRET_KEY_FILE="$KEY_DIR/cache-priv-key.pem" \
-        nix-serve --listen 0.0.0.0:5000 &
-SERVE_PID=$!
-
-cleanup() {
-    echo "[stop] shutting down"
-    kill "$SERVE_PID" "$DAEMON_PID" 2>/dev/null || true
-    wait 2>/dev/null || true
-}
-trap cleanup EXIT INT TERM
-
-# 6. sshd in foreground
-echo "[start] sshd on :22"
-exec /usr/local/bin/sshd -D -e
+# 4. Hand off to supervisord, which runs nix-daemon, nix-serve and sshd
+#    (priorities ordered so nix-daemon starts first; nix-serve waits on
+#    the daemon socket before launching).  supervisord becomes PID 1,
+#    reaps zombies, restarts crashed children, and forwards SIGTERM to
+#    each program on container stop.
+echo "[start] supervisord"
+exec /usr/local/bin/supervisord -c /etc/supervisord.conf
