@@ -1,7 +1,7 @@
 Port 22
-HostKey /etc/ssh/ssh_host_rsa_key
-HostKey /etc/ssh/ssh_host_ecdsa_key
-HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /shared/keys/host_keys/ssh_host_rsa_key
+HostKey /shared/keys/host_keys/ssh_host_ecdsa_key
+HostKey /shared/keys/host_keys/ssh_host_ed25519_key
 
 UsePAM no
 PermitRootLogin no

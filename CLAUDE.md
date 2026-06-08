@@ -66,11 +66,21 @@ CI runs this on every push; the publish job is gated on it.
 - `docker` on this dev host is podman 5.8.2.  `docker compose` resolves to
   `podman-compose`.  CI uses real Docker.
 
-## Cache key
+## Keys volume (`nix-builder-keys` -> `/shared/keys`)
 
-Generated once at first server start, persisted in the `shared-keys`
-docker volume.  Public key lives at `/shared/keys/cache-pub-key.pem` on
-the server; copy that value into the consumer's `trusted-public-keys`.
+Everything stateful that survives container recreation lives in this one
+volume:
+
+- `cache-priv-key.pem` / `cache-pub-key.pem` — binary-cache signing pair
+- `id_ed25519` / `id_ed25519.pub` — nixbuild SSH key, used by the
+  verifier (and any client that fetches it)
+- `host_keys/ssh_host_{rsa,ecdsa,ed25519}_key` — sshd host keys,
+  referenced directly by `server/sshd_config` so the fingerprint stays
+  stable across `docker compose down && up`
+
+Anything not in this volume is regenerated on boot (e.g. nixbuild's
+`authorized_keys`), so when adding new state, decide deliberately
+whether it belongs in the volume.
 
 ## `nixbuild` authorized_keys
 

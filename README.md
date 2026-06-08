@@ -40,15 +40,17 @@ on the host:
 
 ### Use the prebuilt GHCR image instead
 
-The image is just the server; you still need the two named volumes (so
-the store and the generated cache/SSH keys survive container recreation)
-and the port mappings.  Self-contained `docker run`:
+The image is just the server; you still need the two named volumes and
+the port mappings.  `nix-store` holds `/nix/store`; `nix-builder-keys`
+holds the binary-cache signing key, the `nixbuild` SSH key, **and** the
+sshd host keys — so the host fingerprint clients see is stable across
+container recreation.  Self-contained `docker run`:
 
 ```sh
 docker run -d --name nix-cache-builder \
   -p 2222:22 -p 5000:5000 \
-  -v nix-cache-builder-store:/nix \
-  -v nix-cache-builder-keys:/shared/keys \
+  -v nix-store:/nix \
+  -v nix-builder-keys:/shared/keys \
   --restart unless-stopped \
   ghcr.io/ly4096x/nix-cache-builder:latest
 ```
@@ -64,12 +66,12 @@ services:
       - "5000:5000"
     volumes:
       - nix-store:/nix
-      - shared-keys:/shared/keys
+      - nix-builder-keys:/shared/keys
     restart: unless-stopped
 
 volumes:
   nix-store:
-  shared-keys:
+  nix-builder-keys:
 ```
 
 > The package is private until visibility is flipped on the GitHub
@@ -100,8 +102,8 @@ cp ~/.ssh/id_ed25519.pub ./team-keys/me.pub      # add as many as you want
 
 docker run -d --name nix-cache-builder \
   -p 2222:22 -p 5000:5000 \
-  -v nix-cache-builder-store:/nix \
-  -v nix-cache-builder-keys:/shared/keys \
+  -v nix-store:/nix \
+  -v nix-builder-keys:/shared/keys \
   -v $(pwd)/team-keys:/shared/authorized_keys.d:ro \
   ghcr.io/ly4096x/nix-cache-builder:latest
 ```
@@ -126,14 +128,15 @@ docker compose run --rm verifier
 
 ### Where the keys live
 
-Generated once on first server start, persisted in the `shared-keys`
+Generated once on first server start, persisted in the `nix-builder-keys`
 docker volume:
 
-| Path in container               | What it is                                          |
-|---------------------------------|-----------------------------------------------------|
-| `/shared/keys/id_ed25519`       | SSH private key the client uses to log in as `nixbuild` |
-| `/shared/keys/id_ed25519.pub`   | Public counterpart, already in `nixbuild`'s `authorized_keys` |
-| `/shared/keys/cache-pub-key.pem` | Binary-cache public key — consumers add this to `trusted-public-keys` |
+| Path in container                       | What it is                                                                 |
+|-----------------------------------------|----------------------------------------------------------------------------|
+| `/shared/keys/id_ed25519`               | SSH private key the client uses to log in as `nixbuild`                    |
+| `/shared/keys/id_ed25519.pub`           | Public counterpart, already in `nixbuild`'s `authorized_keys`              |
+| `/shared/keys/cache-pub-key.pem`        | Binary-cache public key — consumers add this to `trusted-public-keys`      |
+| `/shared/keys/host_keys/ssh_host_*_key` | sshd host keys.  Living in the volume means the host fingerprint stays the same across `docker compose down && up`, so clients don't see "host key changed" warnings. |
 
 Read them with `docker exec nix-cache-builder cat /shared/keys/<file>`.
 

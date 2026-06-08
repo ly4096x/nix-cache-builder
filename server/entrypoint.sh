@@ -62,11 +62,19 @@ sort -u "$AUTH_KEYS" -o "$AUTH_KEYS"
 chown nixbuild:nixbuild "$AUTH_KEYS"
 chmod 600 "$AUTH_KEYS"
 
-# 3. SSH host keys
+# 3. SSH host keys — generated into the keys volume so the fingerprint
+#    stays stable across container recreation.  sshd_config points at
+#    these paths directly.
+HOST_KEY_DIR="$KEY_DIR/host_keys"
+mkdir -p "$HOST_KEY_DIR"
+chmod 700 "$HOST_KEY_DIR"
 for type in rsa ecdsa ed25519; do
-    if [ ! -f "/etc/ssh/ssh_host_${type}_key" ]; then
-        ssh-keygen -t "$type" -N "" -f "/etc/ssh/ssh_host_${type}_key" >/dev/null
+    if [ ! -f "$HOST_KEY_DIR/ssh_host_${type}_key" ]; then
+        echo "[init] generating ssh host key ($type)"
+        ssh-keygen -t "$type" -N "" -f "$HOST_KEY_DIR/ssh_host_${type}_key" >/dev/null
     fi
+    chmod 600 "$HOST_KEY_DIR/ssh_host_${type}_key"
+    chmod 644 "$HOST_KEY_DIR/ssh_host_${type}_key.pub"
 done
 
 # 4. nix-daemon (root) — provides the /nix/var/nix/daemon-socket socket that
