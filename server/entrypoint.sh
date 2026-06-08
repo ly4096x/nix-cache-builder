@@ -14,6 +14,21 @@ CACHE_NAME="${CACHE_NAME:-nix-cache-builder-1}"
 
 mkdir -p "$KEY_DIR" /run
 
+# Self-heal: when the user reuses a persistent /nix volume that was
+# populated by an older image build, the new image's symlink farm in
+# /usr/local/bin points at store paths the volume doesn't contain
+# (e.g. /usr/local/bin/supervisord -> /root/.nix-profile/bin/supervisord
+# -> missing-in-volume).  Detect by walking the critical tools; if any
+# don't resolve to an executable file, re-run install-packages.sh so
+# the missing packages land in the volume's nix profile.
+for tool in supervisord nix-serve nix-daemon sshd ssh-keygen nix-store sort pkill; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "[init] $tool missing — /nix volume is stale relative to image, running install-packages.sh"
+        /install-packages.sh
+        break
+    fi
+done
+
 # 1. Binary-cache signing key (persisted across restarts via shared volume)
 if [ ! -f "$KEY_DIR/cache-priv-key.pem" ]; then
     echo "[init] generating binary cache signing key ($CACHE_NAME)"

@@ -8,20 +8,14 @@ FROM docker.io/nixos/nix:2.34.7
 
 COPY nix.conf /etc/nix/nix.conf
 
-# Pin to a known-good channel snapshot via nix-env -iA on the bundled
-# `nixpkgs` channel that ships with the base image.
-RUN nix-env -iA \
-        nixpkgs.openssh \
-        nixpkgs.nix-serve \
-        nixpkgs.python3Packages.supervisor \
-        nixpkgs.procps \
-        nixpkgs.bash \
-        nixpkgs.shadow \
-        nixpkgs.util-linux \
-        nixpkgs.coreutils \
-        nixpkgs.gnused \
-        nixpkgs.gnugrep \
-    && { nix-collect-garbage -d >/dev/null 2>&1 || true; }
+# Install runtime packages via install-packages.sh so the list is in
+# exactly one file (also re-used by the entrypoint self-heal step).
+# The marker is written so entrypoint.sh can detect when a user's
+# persistent /nix volume was populated by a previous image build.
+COPY install-packages.sh /install-packages.sh
+RUN chmod +x /install-packages.sh && \
+    /install-packages.sh && \
+    { nix-collect-garbage -d >/dev/null 2>&1 || true; }
 
 # Expose nix-installed binaries on the global PATH so non-interactive ssh
 # sessions (sshd execs nix-daemon for ssh-ng builds) can find them.

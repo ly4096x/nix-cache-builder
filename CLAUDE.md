@@ -40,6 +40,27 @@ Ports on the host: `2222` (ssh-ng) and `5000` (nix-serve HTTP).
   references an alias rather than a literal `host:port`) — lets the
   container move local↔remote with a one-line change.
 
+## Runtime package list lives in `install-packages.sh`
+
+The Dockerfile's nix-env step is just `RUN /install-packages.sh`.  The
+same script also runs from `entrypoint.sh` as a self-heal step on cold
+start: when the user reuses a persistent `/nix` volume that was
+populated by a previous image build, the new image's `/usr/local/bin`
+symlinks point at store paths the volume doesn't contain.  The
+entrypoint walks a list of critical tools (`supervisord`, `nix-serve`,
+`nix-daemon`, `sshd`, `ssh-keygen`, `nix-store`, `sort`, `pkill`); if
+any fail `command -v`, it re-runs `install-packages.sh` so the missing
+packages land in the volume's nix profile.
+
+Important detail: `install-packages.sh` runs `nix-channel --update`
+first.  The nixos/nix base image leaves the `nixpkgs` channel
+subscribed but never unpacked, so a fresh `nix-env -iA nixpkgs.*` at
+runtime would 404 with "attribute 'nixpkgs' not found".
+
+Adding or removing a runtime package means editing **only**
+`install-packages.sh`.  Adding a tool used by the entrypoint also means
+adding it to the canary list in the for-loop.
+
 ## Non-obvious things (rediscover at your peril)
 
 | Symptom | Cause | Fix |
