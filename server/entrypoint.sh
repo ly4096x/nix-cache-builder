@@ -2,8 +2,9 @@
 # Init for the nix-cache-builder container:
 #   1. generate / refresh keys under /shared/keys (the nix-builder-keys volume)
 #   2. rebuild /home/nixbuild/.ssh/authorized_keys from the operator inputs
-#   3. hand off to supervisord, which actually runs nix-daemon, nix-serve
-#      and sshd (definitions in /etc/supervisord.conf).
+#   3. prepare the ccache directory + optional sandbox override
+#   4. hand off to s6-svscan, which runs nix-daemon, harmonia and sshd
+#      (definitions in /etc/s6/sv/).
 set -euo pipefail
 
 # Make nix-installed tools (su, sshd, ssh-keygen, nix-serve, ...) visible.
@@ -89,7 +90,26 @@ for type in rsa ecdsa ed25519; do
     chmod 644 "$HOST_KEY_DIR/ssh_host_${type}_key.pub"
 done
 
-# 4. Hand off to s6-svscan, which runs nix-daemon, harmonia and sshd
+# 4. ccache: shared compiler cache for ccacheStdenv builds.  Lives under
+#    /nix so it persists in the nix-store volume automatically.  Owned
+#    root:nixbld with the setgid bit so every nixbld* build user writes
+#    into one shared cache (the client's CCACHE_UMASK=007 keeps the
+#    individual cache files group-readable across build users).
+CCACHE_DIR=/nix/var/cache/ccache
+mkdir -p "$CCACHE_DIR"
+chown root:nixbld "$CCACHE_DIR"
+chmod 2770 "$CCACHE_DIR"
+
+# Optional runtime sandbox override.  Off by default (rootless-podman
+# compatibility); set NIX_SANDBOX=true on hosts where user namespaces
+# work to get deterministic /build dirs and far better ccache hit rates.
+# A later `sandbox =` line in nix.conf wins over the baked-in default.
+if [ -n "${NIX_SANDBOX:-}" ]; then
+    echo "[init] overriding sandbox = $NIX_SANDBOX"
+    printf 'sandbox = %s\n' "$NIX_SANDBOX" >> /etc/nix/nix.conf
+fi
+
+# 5. Hand off to s6-svscan, which runs nix-daemon, harmonia and sshd
 #    from /etc/s6/sv/.  Each service's run script is a single 'exec',
 #    so s6-svscan owns PID directly and restarts crashes automatically.
 #    SIGTERM to s6-svscan stops the whole tree cleanly.

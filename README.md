@@ -140,6 +140,25 @@ docker volume:
 
 Read them with `docker exec nix-cache-builder cat /shared/keys/<file>`.
 
+### Optional: ccache
+
+The server creates `/nix/var/cache/ccache` (owned `root:nixbld`, mode
+`2770`) and lists it in `extra-sandbox-paths`, so builds compiled with a
+ccache-wrapped compiler share one persistent compiler cache (it lives
+under `/nix`, so the `nix-store` volume persists it).  This is opt-in on
+the **client** side — see [§3](#3-optional-ccache-for-near-miss-rebuilds).
+
+ccache hits are most reliable with the Nix sandbox on (deterministic
+`/build` directory).  The sandbox is off by default for rootless-podman
+compatibility; turn it on where user namespaces work:
+
+```sh
+docker run -d --name nix-cache-builder -e NIX_SANDBOX=true \
+  -p 2222:22 -p 5000:5000 \
+  -v nix-store:/nix -v nix-builder-keys:/shared/keys \
+  ghcr.io/ly4096x/nix-cache-builder:latest
+```
+
 ---
 
 ## 2. Set up a NixOS host to use the server
@@ -245,6 +264,89 @@ nix-build --no-out-link -E '
 Expected: a `building '...drv' on 'ssh-ng://nixbuild@nix-cache-builder'…`
 line, then the path appears locally **and** is queryable as
 `http://CACHE-HOST:5000/<hash>.narinfo`.
+
+---
+
+## 3. Optional: ccache for near-miss rebuilds
+
+The binary cache already eliminates *exact* rebuilds.  ccache adds the
+**near-miss** case: a package whose derivation hash changed (version bump,
+patch, toolchain bump) but whose translation units are mostly identical —
+ccache serves the unchanged `.o` files instead of recompiling.  Only worth
+it for heavy C/C++ packages you rebuild often.
+
+Because remote builders *realize* derivations the client already
+*instantiated*, the compiler is fixed at instantiation time — so the
+ccache wrapper has to be selected **on the client**.  The server just
+provides the writable `/nix/var/cache/ccache` (§1).
+
+Add this module on the client and import it from your host config:
+
+```nix
+# nix-ccache.nix
+{ config, lib, ... }:
+let cfg = config.services.nixCcache; in {
+  options.services.nixCcache = {
+    enable = lib.mkEnableOption "ccache-wrapped builds for selected packages";
+    packages = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "ffmpeg" "mpv" ];
+      description = "pkgs attr names to rebuild through ccacheStdenv.";
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    nixpkgs.overlays = [
+      # Wrapper env is baked into the derivation, so it runs on the builder.
+      # CCACHE_UMASK=007 keeps the cache group-writable across nixbld* users;
+      # CCACHE_NOHASHDIR + the sloppiness set let builds hit across nix's
+      # per-build temp dirs (needed when the builder runs sandbox = false).
+      (final: prev: {
+        ccacheWrapper = prev.ccacheWrapper.override {
+          extraConfig = ''
+            export CCACHE_DIR=/nix/var/cache/ccache
+            export CCACHE_UMASK=007
+            export CCACHE_COMPRESS=1
+            export CCACHE_NOHASHDIR=1
+            export CCACHE_SLOPPINESS=locale,time_macros,include_file_mtime,include_file_ctime,file_stat_matches,random_seed
+          '';
+        };
+      })
+      (final: prev:
+        lib.genAttrs cfg.packages (name:
+          prev.${name}.override { stdenv = final.ccacheStdenv; }))
+    ];
+  };
+}
+```
+
+```nix
+# Generic C/C++ packages: list them by pkgs attr name.
+services.nixCcache = { enable = true; packages = [ "ffmpeg" ]; };
+```
+
+The Linux kernel is the classic ccache win — a `.config` tweak or minor
+version bump recompiles thousands of mostly-identical translation units.
+It's selected through `boot.kernelPackages`, not the `packages` list above
+(`pkgs.ccacheStdenv` is the wrapper-overridden one once the module is
+enabled):
+
+```nix
+# in your host config (which has `pkgs` in scope)
+boot.kernelPackages = pkgs.linuxPackagesFor (pkgs.linux.override {
+  stdenv = pkgs.ccacheStdenv;
+});
+```
+
+The first build of a selected package populates the cache (mostly misses);
+a later rebuild with a changed derivation hash but unchanged sources is
+served from ccache.  Inspect hit rates on the server:
+
+```sh
+docker exec nix-cache-builder sh -c \
+  'CCACHE_DIR=/nix/var/cache/ccache "$(ls /nix/store/*-ccache-*/bin/ccache | head -1)" -s'
+```
 
 ---
 

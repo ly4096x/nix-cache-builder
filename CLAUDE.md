@@ -131,3 +131,27 @@ restart the container — there is no in-place "remove key" path.
 If you change the entrypoint's authorized_keys logic, make sure the
 auto-generated key still ends up first so the verifier keeps working
 without operator setup.
+
+## ccache
+
+`entrypoint.sh` creates `/nix/var/cache/ccache` (`root:nixbld`, mode
+`2770` setgid) and `nix.conf` lists it in `extra-sandbox-paths`.  That's
+the whole server side — a persistent, build-user-writable compiler cache
+under `/nix` (so the `nix-store` volume persists it).
+
+The build user creates the cache shards on first use with
+`CCACHE_UMASK=007`, so they stay group-writable across all 32 `nixbld*`
+users.  **Don't run `ccache` (or anything that writes the cache) as root
+in the container** — root-owned shards get mode `0755` and then the
+build users hit `Permission denied` on `stats.lock` and silently stop
+caching (0 cacheable calls, cache stays empty).  Found this the hard way
+during VM verification.
+
+ccache is opt-in from the **client**: derivations are instantiated on the
+client, so the ccache-wrapped compiler is selected there (a
+`ccacheStdenv` overlay — see README §3), not on the builder.  Hit rates
+are best with `NIX_SANDBOX=true` (deterministic `/build` dir); the
+entrypoint appends a `sandbox =` override when that env is set.  Verified
+in a VM: a near-miss rebuild of `hello` (new derivation hash, unchanged
+sources) was ~99% ccache hits through the ssh-ng remote builder, in both
+sandbox modes.
