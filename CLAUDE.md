@@ -80,6 +80,7 @@ adding it to the canary list in the for-loop.
 | `Privilege separation user sshd does not exist` | OpenSSH needs an `sshd` privsep account | `groupadd -r sshd && useradd -r -g sshd ...` |
 | Verifier passes 5/6, fails the cache round-trip | Nix caches the pre-build "not in substituter" probe for 1h; never re-queries after the builder adds the path | client `nix.conf` must set `narinfo-cache-negative-ttl = 0` |
 | `sed: command not found` in verifier | verifier image didn't install `gnused`/`gnugrep`/`gawk` | install them via nix-env |
+| `unshare: Operation not permitted` in a build / FS-image builders emit `nixbld`-owned trees | Docker's default seccomp denies `unshare(CLONE_NEWUSER)` for the unprivileged `nixbld*` build users (podman's default allows it) | `security_opt: [seccomp:unconfined]` on the `nix-builder` service (host must also allow unprivileged userns). Separate from `NIX_SANDBOX` — the root nix-daemon's own sandbox builds fine without it |
 
 ## Verifier contract
 

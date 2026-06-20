@@ -21,6 +21,24 @@ services:
     volumes:
       - nix-store:/nix
       - nix-builder-keys:/shared/keys
+    # Allow build-time unprivileged user namespaces.  Docker's default
+    # seccomp profile denies unshare(CLONE_NEWUSER) for the unprivileged
+    # nixbld* build users, which breaks derivations whose *build* opens a
+    # userns — notably filesystem-image builders that must emit a
+    # root-owned tree (e.g. `unshare --map-root-user … mkfs.btrfs -r`).
+    # Verified on real Docker 20.10: as an unprivileged user the probe
+    # fails "unshare: Operation not permitted" by default and maps uid 0
+    # with this set.  (podman's default profile already allows it, so
+    # this is a no-op there; and it's separate from NIX_SANDBOX — the
+    # root nix-daemon's own sandbox doesn't need it.)
+    # The host kernel must also permit it — on a restrictive host set
+    # `sysctl kernel.unprivileged_userns_clone=1` and a non-zero
+    # `user.max_user_namespaces` (Ubuntu 24.04 also needs
+    # `kernel.apparmor_restrict_unprivileged_userns=0`).
+    # Hardening: replace `unconfined` with a custom profile that is the
+    # Docker default plus unshare/clone/setns carrying the NEW* flags.
+    security_opt:
+      - seccomp:unconfined
     environment:
       # Pubkeys appended to nixbuild's authorized_keys (one per line):
       #   AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d
