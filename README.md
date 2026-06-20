@@ -1,22 +1,25 @@
 # nix-cache-builder
 
 A single container that acts as **both** a Nix remote builder (ssh-ng) and
-a binary cache (nix-serve).  A separate verifier container exercises both
-paths end-to-end so you can confirm a fresh deployment actually works.
+a binary cache (harmonia, a nix-serve-compatible cache in Rust).  A
+separate verifier container exercises both paths end-to-end so you can
+confirm a fresh deployment actually works.
 
 ```
-host                                  container
+host                                  container  (s6-svscan as PID 1)
 ─────────────────────────────────     ─────────────────────────────────
 nixos-rebuild                ──ssh-ng──▶  sshd → nix-daemon (root)
                                                  builds in /nix/store
                                                  ▼
-                                          nix-serve (nixbuild, non-root)
+                                          harmonia (nixbuild, non-root)
 nix-store --realize          ◀──HTTP─────  serves narinfo / NAR
 ```
 
+- s6-svscan is PID 1 and supervises the three services below
 - nix-daemon runs as root (required to own `/nix/store`)
 - sshd accepts only the unprivileged `nixbuild` user
-- nix-serve runs as `nixbuild` (privileges dropped via `setpriv`)
+- harmonia (HTTP binary cache) runs as `nixbuild`, launched by s6 via
+  `s6-setuidgid`
 - actual build processes still sandbox under the base image's `nixbld*`
   system users via nix-daemon
 
@@ -36,7 +39,7 @@ on the host:
 | Port | Purpose                             |
 |------|-------------------------------------|
 | 2222 | ssh-ng remote builder               |
-| 5000 | nix-serve binary cache (HTTP)       |
+| 5000 | harmonia binary cache (HTTP)        |
 
 ### Use the prebuilt GHCR image instead
 
@@ -121,7 +124,7 @@ docker compose run --rm verifier
 
 1. `GET /nix-cache-info` reachable
 2. A fresh timestamped derivation builds remotely via ssh-ng
-3. Its narinfo is published by nix-serve
+3. Its narinfo is published by harmonia
 4. narinfo carries the cache signature
 5. NAR payload is downloadable
 6. After local delete, `nix copy --from` repulls it (validates signature trust end-to-end)
@@ -158,6 +161,24 @@ docker run -d --name nix-cache-builder -e NIX_SANDBOX=true \
   -v nix-store:/nix -v nix-builder-keys:/shared/keys \
   ghcr.io/ly4096x/nix-cache-builder:latest
 ```
+
+### Optional: filesystem-image builds (user namespaces)
+
+Derivations whose *build* opens a user namespace — e.g. image builders that
+emit a root-owned tree with `unshare --map-root-user … mkfs.btrfs -r` — need
+the container to allow unprivileged `unshare(CLONE_NEWUSER)`.  Docker's
+default seccomp profile denies it for the unprivileged `nixbld*` users
+(podman's default allows it).  The bundled `docker-compose.yml` already sets
+this; with raw `docker run` add:
+
+```sh
+  --security-opt seccomp=unconfined
+```
+
+The host kernel must also permit unprivileged user namespaces
+(`sysctl kernel.unprivileged_userns_clone=1` and a non-zero
+`user.max_user_namespaces`; on Ubuntu 24.04 also
+`kernel.apparmor_restrict_unprivileged_userns=0`).
 
 ---
 
