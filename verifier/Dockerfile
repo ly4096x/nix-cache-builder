@@ -1,7 +1,7 @@
 # NixOS-flavoured client used to verify the server is both building and
 # caching as expected.  Uses the same nixos/nix base image so a real `nix`
 # binary drives the test (rather than curl-only smoke tests).
-FROM docker.io/nixos/nix:2.34.7
+FROM docker.io/nixos/nix:2.35.1
 
 RUN nix-env -iA \
         nixpkgs.openssh \
