@@ -127,6 +127,74 @@ if [ -n "${EXTRA_PLATFORMS:-}" ]; then
     printf 'extra-platforms = %s\n' "$EXTRA_PLATFORMS" >> /etc/nix/nix.conf
 fi
 
+# 4c. Report what this container can actually emulate.
+#
+#     The report comes from *executing* a small static binary per
+#     platform, not from reading /proc/sys/fs/binfmt_misc: a container
+#     gets a fresh procfs, so that directory is empty here even when the
+#     host has handlers, and — worse — being able to see a handler does
+#     not imply being able to use it.  Under rootless podman the
+#     container sits in a nested user namespace and does NOT inherit the
+#     host's registrations, so a read-based check would cheerfully
+#     report a capability that every build then fails to use.  An exec
+#     probe is the same thing nix will do, so it cannot disagree.
+#
+#     Probes are built into the image (see Dockerfile); a missing probe
+#     means we simply cannot say.
+#     Only platforms whose static probe was in the binary cache at image
+#     build time can be answered at all — in practice that is
+#     aarch64-linux.  Everything else is reported as unverifiable rather
+#     than as broken: claiming "not usable" for a platform we never
+#     tested would be worse than saying nothing.
+PROBE_DIR=/usr/local/lib/binfmt-probe
+echo "[init] cross-architecture capability:"
+usable=""
+probed=""
+if [ -d "$PROBE_DIR" ]; then
+    for probe in "$PROBE_DIR"/*; do
+        [ -x "$probe" ] || continue
+        platform=$(basename "$probe")
+        probed="$probed $platform"
+        if "$probe" >/dev/null 2>&1; then
+            echo "[init]   $platform: usable"
+            usable="$usable $platform"
+        else
+            # exit 126 / ENOEXEC is "no binfmt handler reachable from
+            # this container"; anything else means the handler ran but
+            # the probe itself failed, which is still a broken setup.
+            echo "[init]   $platform: NOT usable (no binfmt handler reachable)"
+        fi
+    done
+fi
+[ -n "$probed" ] || echo "[init]   (no probe binaries in image — cannot determine)"
+[ -n "$usable" ] || echo "[init]   nothing beyond $(uname -m) is executable here"
+
+# Cross-check intent against reality so a misconfiguration is loud at
+# boot rather than a confusing build failure hours later.
+for platform in ${EXTRA_PLATFORMS:-}; do
+    case " $usable " in
+        *" $platform "*) continue ;;
+    esac
+    case " $probed " in
+        *" $platform "*)
+            echo "[init]   WARNING: extra-platforms lists $platform but the probe"
+            echo "[init]            for it failed — builds will die with 'Exec"
+            echo "[init]            format error'.  Register a handler with"
+            echo "[init]            docker compose --profile binfmt up binfmt" ;;
+        *)
+            echo "[init]   note: extra-platforms lists $platform; no probe for it"
+            echo "[init]         is in this image, so it could not be verified." ;;
+    esac
+done
+for platform in $usable; do
+    case " ${EXTRA_PLATFORMS:-} " in
+        *" $platform "*) ;;
+        *) echo "[init]   note: $platform is executable but absent from"
+           echo "[init]         EXTRA_PLATFORMS, so nix will still refuse it"
+           echo "[init]         (platform mismatch)." ;;
+    esac
+done
+
 # 5. Hand off to s6-svscan, which runs nix-daemon, harmonia and sshd
 #    from /etc/s6/sv/.  Each service's run script is a single 'exec',
 #    so s6-svscan owns PID directly and restarts crashes automatically.

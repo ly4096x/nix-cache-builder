@@ -6,9 +6,10 @@ container exercises both paths end-to-end.
 
 ## Layout
 
-- `docker-compose.yml` — orchestrates `nix-builder` and `verifier`
+- `docker-compose.yml` — orchestrates `nix-builder`, `verifier`, `binfmt`
 - `server/` — `Dockerfile`, `entrypoint.sh`, `nix.conf`, `sshd_config`
 - `verifier/` — `Dockerfile`, `entrypoint.sh`, `verify.sh`
+- `binfmt/` — one-shot privileged binfmt_misc registrar (opt-in profile)
 - `.github/workflows/` — CI: verify + publish to ghcr.io
 
 ## Commands
@@ -81,6 +82,46 @@ adding it to the canary list in the for-loop.
 | Verifier passes 5/6, fails the cache round-trip | Nix caches the pre-build "not in substituter" probe for 1h; never re-queries after the builder adds the path | client `nix.conf` must set `narinfo-cache-negative-ttl = 0` |
 | `sed: command not found` in verifier | verifier image didn't install `gnused`/`gnugrep`/`gawk` | install them via nix-env |
 | `unshare: Operation not permitted` in a build / FS-image builders emit `nixbld`-owned trees | Docker's default seccomp denies `unshare(CLONE_NEWUSER)` for the unprivileged `nixbld*` build users (podman's default allows it) | `security_opt: [seccomp:unconfined]` on the `nix-builder` service (host must also allow unprivileged userns). Separate from `NIX_SANDBOX` — the root nix-daemon's own sandbox builds fine without it |
+
+## Cross-architecture builds (binfmt)
+
+Two independent switches, and confusing them is the usual failure:
+
+- **`EXTRA_PLATFORMS`** (env → `extra-platforms` in the builder's
+  nix.conf) is only a *declaration*.  Nix rejects a foreign derivation
+  with `platform mismatch` unless the platform is listed, and it does
+  **not** infer the list from binfmt_misc.
+- **binfmt_misc handlers** are what actually execute foreign binaries.
+  `docker compose --profile binfmt up binfmt` installs them from
+  `binfmt/` (a separate image so the long-lived, ssh-facing builder
+  never runs privileged).
+
+Declaring a platform with no handler is the worse failure of the two:
+nix accepts the job and it dies mid-build with `Exec format error`
+instead of being refused up front.
+
+### Things that cost real time to rediscover
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Registration "succeeds", nothing can run foreign binaries | Since Linux 6.7 binfmt_misc is **per mount instance**.  A container that mounts its own gets a private table that dies with it | Bind-mount the host's instance into the registrar (`-v /proc/sys/fs/binfmt_misc:/proc/sys/fs/binfmt_misc`); the host must have it mounted first.  `register-binfmt.sh` now refuses to mount its own and says so |
+| Host + rootful containers work, rootless podman still `Exec format error` | binfmt_misc registrations are **not inherited by nested user namespaces**.  Rootless podman always runs in one | Not fixable from inside the project.  Real Docker / rootful podman only |
+| Whole host suddenly can't exec *any* binary (`ELOOP`) | A registration whose magic got truncated matches all ELF, and the interpreter matches too → infinite recursion.  `\x00` in the magic truncates it if you write **raw bytes** | binfmt_misc's `register` parser does its own `\xNN` unquoting — write the **literal backslash text** (`printf '%s' '\x7fELF…'`), never `printf '\x7fELF…'`.  Recover by unregistering from an existing root shell, else reboot (registrations are not persistent) |
+| Magic/mask hand-transcribed and subtly wrong | 20 bytes of ELF header with holes in the mask | Copy from nixpkgs `nixos/lib/binfmt-magics.nix` verbatim |
+
+### Boot-time capability report
+
+`entrypoint.sh` execs a small static binary per architecture from
+`/usr/local/lib/binfmt-probe/` and prints what actually works.  It is an
+exec probe on purpose: a container's `/proc/sys/fs/binfmt_misc` is a
+fresh procfs and looks empty even when the host has handlers, and under
+rootless podman *seeing* a handler would not mean being able to use it.
+
+The probes are built by `server/build-binfmt-probes.sh` at image build
+with `nix-build --max-jobs 0` (substitute-or-skip, so the image build
+never falls back to cross-compiling a toolchain).  In practice only
+`pkgsStatic.hello` for `aarch64-linux` is in the binary cache, so other
+platforms are reported as *unverified* rather than as broken.
 
 ## Verifier contract
 

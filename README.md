@@ -180,6 +180,83 @@ The host kernel must also permit unprivileged user namespaces
 `user.max_user_namespaces`; on Ubuntu 24.04 also
 `kernel.apparmor_restrict_unprivileged_userns=0`).
 
+### Optional: cross-architecture builds (binfmt)
+
+The builder can accept `aarch64-linux` (and other) derivations and run
+them under qemu-user emulation.  Two independent things have to line up:
+
+1. **binfmt_misc handlers in the kernel** — what actually executes the
+   foreign binaries.  The bundled one-shot `binfmt` service installs
+   them.
+2. **`extra-platforms` in the builder's nix.conf** — nix rejects a
+   foreign derivation up front (`platform mismatch`) unless the platform
+   is declared.  Nix does *not* infer this from binfmt_misc.
+
+```sh
+# 1. register handlers (privileged, one-shot, exits immediately)
+docker compose --profile binfmt up binfmt
+
+# 2. tell the builder it may accept them
+EXTRA_PLATFORMS=aarch64-linux docker compose up -d nix-builder
+```
+
+Register more than one arch, or undo it:
+
+```sh
+PLATFORMS="aarch64-linux riscv64-linux" docker compose --profile binfmt up binfmt
+UNREGISTER=1 docker compose --profile binfmt up binfmt
+```
+
+`binfmt` is behind a compose profile because it is privileged and it
+mutates kernel state shared by the whole host — it never runs as part of
+a plain `docker compose up`.  Registrations last until reboot.
+
+The builder prints what it can actually emulate on every start:
+
+```
+[init] extra-platforms = aarch64-linux
+[init] cross-architecture capability:
+[init]   aarch64-linux: usable
+```
+
+That line comes from *executing* a small static binary of each
+architecture, not from reading `/proc/sys/fs/binfmt_misc` — a container
+gets a fresh procfs, so that directory looks empty here even when the
+host has handlers.  Only architectures whose static probe was in the
+binary cache when the image was built can be reported at all; in
+practice that is `aarch64-linux`, and anything else is reported as
+unverified rather than as broken.
+
+#### Rootless podman cannot do this
+
+Since Linux 6.7 binfmt_misc is scoped per mount instance and per user
+namespace.  Two consequences, both verified the hard way:
+
+- A container that mounts its own `binfmt_misc` gets a private instance
+  whose registrations die with the container.  The `binfmt` service
+  therefore needs the host's instance bind-mounted in, which is what the
+  compose service does.
+- **A rootless container does not inherit the host's registrations at
+  all.**  The same arm64 image that prints `aarch64` under rootful
+  Docker/podman fails with `Exec format error` under rootless podman.
+
+So this feature works under real Docker and rootful podman (including
+CI), and cannot be made to work from inside the project on a
+rootless-podman host.  The boot-time report above is what tells you
+which situation you are in — trust it over the fact that registration
+appeared to succeed.
+
+To exercise the whole path end to end:
+
+```sh
+VERIFY_PLATFORMS=aarch64-linux docker compose run --rm verifier
+```
+
+That adds a seventh step to the verifier which builds a real
+`aarch64-linux` derivation through the remote builder and checks
+`uname -m`.  It is opt-in, so the default six-step run still passes on
+hosts with no handlers.
+
 ---
 
 ## 2. Set up a NixOS host to use the server
@@ -223,6 +300,10 @@ your host configuration:
       sshUser = "nixbuild";
       sshKey = "/etc/nix-cache-builder/id_ed25519";
       protocol = "ssh-ng";
+      # Add "aarch64-linux" here too if the server was started with
+      # EXTRA_PLATFORMS — this list is what decides whether the client
+      # even offers a foreign-arch job to the builder.  See
+      # "Optional: cross-architecture builds (binfmt)" in §1.
       systems = [ "x86_64-linux" ];
       maxJobs = 4;
       speedFactor = 1;

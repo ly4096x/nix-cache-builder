@@ -13,8 +13,13 @@ COPY nix.conf /etc/nix/nix.conf
 # The marker is written so entrypoint.sh can detect when a user's
 # persistent /nix volume was populated by a previous image build.
 COPY install-packages.sh /install-packages.sh
-RUN chmod +x /install-packages.sh && \
+COPY build-binfmt-probes.sh /build-binfmt-probes.sh
+RUN chmod +x /install-packages.sh /build-binfmt-probes.sh && \
     /install-packages.sh && \
+    # Static foreign-arch binaries the entrypoint execs to report what
+    # this container can emulate.  Must run here, while the channel from
+    # install-packages.sh is still unpacked.
+    /build-binfmt-probes.sh && \
     # Drop the nixpkgs channel source (~640 MB) from the image — the
     # closure of the packages we actually use is already in the store,
     # and install-packages.sh re-adds + re-fetches the channel at

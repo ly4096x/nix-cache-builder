@@ -75,8 +75,19 @@ services:
     container_name: nix-cache-binfmt
     profiles: ["binfmt"]
     # Writing to /proc/sys/fs/binfmt_misc/register needs CAP_SYS_ADMIN in
-    # the initial user namespace; mounting binfmt_misc needs it too.
+    # the initial user namespace.
     privileged: true
+    volumes:
+      # Essential, not a convenience.  Since Linux 6.7 binfmt_misc is
+      # scoped per mount instance: if this container mounts its own, the
+      # registrations live in a private instance and vanish with the
+      # container — the registration "succeeds" and changes nothing.
+      # Bind-mounting the host's instance is what makes the writes land
+      # where every other container can see them.  It also means the
+      # host must already have binfmt_misc mounted (systemd normally
+      # does it; otherwise `mount -t binfmt_misc binfmt_misc
+      # /proc/sys/fs/binfmt_misc` once, as root, on the host).
+      - /proc/sys/fs/binfmt_misc:/proc/sys/fs/binfmt_misc
     environment:
       PLATFORMS: ${PLATFORMS:-aarch64-linux}
       UNREGISTER: ${UNREGISTER:-}

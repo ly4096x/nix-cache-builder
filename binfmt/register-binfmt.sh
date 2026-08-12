@@ -80,11 +80,20 @@ UNREGISTER="${UNREGISTER:-}"
 # files exist.  On most hosts systemd has already done it; inside a
 # freshly-booted container namespace it may not be there.
 if [ ! -f "$BINFMT_DIR/register" ]; then
-    echo "[binfmt] mounting binfmt_misc at $BINFMT_DIR"
-    mount -t binfmt_misc binfmt_misc "$BINFMT_DIR" || {
-        echo "[binfmt] ERROR: cannot mount binfmt_misc — is the container privileged?" >&2
-        exit 1
-    }
+    # Nothing mounted here.  Since Linux 6.7 each binfmt_misc mount is a
+    # separate instance, so mounting one now gives us a PRIVATE table
+    # that dies with this container — the registrations below would
+    # appear to succeed and do nothing.  That is a silent failure, so
+    # say plainly what has to be true instead.
+    echo "[binfmt] no binfmt_misc mounted at $BINFMT_DIR" >&2
+    echo "[binfmt] The host's instance must be bind-mounted in for" >&2
+    echo "[binfmt] registrations to be visible outside this container." >&2
+    echo "[binfmt] Fix on the host (once, as root), then re-run:" >&2
+    echo "[binfmt]     mount -t binfmt_misc binfmt_misc $BINFMT_DIR" >&2
+    echo "[binfmt] and make sure the container gets" >&2
+    echo "[binfmt]     -v $BINFMT_DIR:$BINFMT_DIR" >&2
+    echo "[binfmt] (docker-compose.yml already does)." >&2
+    exit 1
 fi
 
 if [ -n "$UNREGISTER" ]; then

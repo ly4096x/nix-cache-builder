@@ -115,16 +115,22 @@ else
     echo "      fetching nixpkgs channel (needed to express a foreign-arch drv)"
     nix-channel --update >/dev/null 2>&1 || true
 
+    NATIVE=$(uname -m)
     for platform in $VERIFY_PLATFORMS; do
-        arch="${platform%%-*}"
         EXPR_X="(import <nixpkgs> { system = \"$platform\"; }).runCommand
-                  \"nix-cache-builder-xarch-${arch}-$TS\" {} \"uname -m > \$out\""
+                  \"nix-cache-builder-xarch-${platform}-$TS\" {} \"uname -m > \$out\""
         if OUT_X=$(nix-build -E "$EXPR_X" --no-out-link 2>/tmp/xbuild.log); then
             GOT=$(cat "$OUT_X" 2>/dev/null)
-            if [ "$GOT" = "$arch" ]; then
-                ok "$platform built on the server, uname -m = $GOT"
+            # Deliberately not compared against a per-platform table of
+            # expected `uname -m` values: those do not match the nix
+            # system name often enough to hardcode (powerpc64le-linux
+            # reports ppc64le, and so on).  What actually matters is that
+            # the builder did NOT quietly run it natively, which is the
+            # only way this can pass while emulation is broken.
+            if [ -n "$GOT" ] && [ "$GOT" != "$NATIVE" ]; then
+                ok "$platform built on the server under emulation (uname -m = $GOT)"
             else
-                fail "$platform built but reported '$GOT' (expected '$arch')"
+                fail "$platform reported '$GOT' — built natively, not emulated"
             fi
         else
             fail "$platform build failed"
