@@ -44,7 +44,43 @@ services:
       #   AUTHORIZED_KEYS="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d
       # Or mount a directory of *.pub files at /shared/authorized_keys.d.
       AUTHORIZED_KEYS: ${AUTHORIZED_KEYS:-}
+      # Foreign systems this builder will accept, space separated (e.g.
+      # "aarch64-linux").  Empty by default: nix rejects a foreign
+      # derivation up front with "platform mismatch", which is a much
+      # better failure than accepting it and dying on "Exec format
+      # error" halfway through.  Only set this for platforms whose
+      # binfmt handler is actually registered — see the `binfmt`
+      # service below.
+      EXTRA_PLATFORMS: ${EXTRA_PLATFORMS:-}
     restart: unless-stopped
+
+  # One-shot: installs qemu-user binfmt_misc handlers into the HOST
+  # kernel, then exits.  Not started by `docker compose up` — it is
+  # behind a profile because it needs privileges and mutates host state:
+  #
+  #   docker compose --profile binfmt up binfmt          # register
+  #   PLATFORMS="aarch64-linux riscv64-linux" \
+  #     docker compose --profile binfmt up binfmt        # more arches
+  #   UNREGISTER=1 docker compose --profile binfmt up binfmt   # remove
+  #
+  # binfmt_misc is kernel-global rather than per-namespace, so what this
+  # registers is visible to every container on the host (and to the host
+  # itself).  Registrations last until reboot or an explicit unregister.
+  # The handlers use the F flag, so they keep working after this
+  # container is gone and the nix-builder needs no qemu of its own.
+  binfmt:
+    build:
+      context: ./binfmt
+    image: nix-cache-binfmt:latest
+    container_name: nix-cache-binfmt
+    profiles: ["binfmt"]
+    # Writing to /proc/sys/fs/binfmt_misc/register needs CAP_SYS_ADMIN in
+    # the initial user namespace; mounting binfmt_misc needs it too.
+    privileged: true
+    environment:
+      PLATFORMS: ${PLATFORMS:-aarch64-linux}
+      UNREGISTER: ${UNREGISTER:-}
+    restart: "no"
 
   verifier:
     build:

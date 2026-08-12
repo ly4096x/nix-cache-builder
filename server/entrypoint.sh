@@ -109,6 +109,24 @@ if [ -n "${NIX_SANDBOX:-}" ]; then
     printf 'sandbox = %s\n' "$NIX_SANDBOX" >> /etc/nix/nix.conf
 fi
 
+# 4b. Cross-architecture builds.  Nix refuses a derivation whose `system`
+#     is neither our own nor listed in extra-platforms ("platform
+#     mismatch"), so foreign platforms have to be declared explicitly —
+#     nix does NOT infer them from the kernel's binfmt_misc table.
+#
+#     This only declares intent.  The actual emulation comes from
+#     binfmt_misc handlers registered on the *host kernel*, which the
+#     bundled `binfmt` compose service installs
+#     (`docker compose --profile binfmt up binfmt`).  Because those are
+#     registered with the F flag, nothing has to be installed here: no
+#     qemu in this image, no extra-sandbox-paths entry.  Declaring a
+#     platform whose handler is missing makes builds fail at exec time
+#     rather than be rejected up front, so only set what you registered.
+if [ -n "${EXTRA_PLATFORMS:-}" ]; then
+    echo "[init] extra-platforms = $EXTRA_PLATFORMS"
+    printf 'extra-platforms = %s\n' "$EXTRA_PLATFORMS" >> /etc/nix/nix.conf
+fi
+
 # 5. Hand off to s6-svscan, which runs nix-daemon, harmonia and sshd
 #    from /etc/s6/sv/.  Each service's run script is a single 'exec',
 #    so s6-svscan owns PID directly and restarts crashes automatically.

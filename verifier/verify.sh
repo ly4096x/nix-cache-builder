@@ -11,9 +11,11 @@ CACHE_URL="http://$SERVER_HOST:$SERVER_HTTP_PORT"
 
 passed=0
 failed=0
+skipped=0
 section() { printf '\n===> %s\n' "$*"; }
 ok()      { printf '  PASS  %s\n' "$*"; passed=$((passed+1)); }
 fail()    { printf '  FAIL  %s\n' "$*"; failed=$((failed+1)); }
+skip()    { printf '  SKIP  %s\n' "$*"; skipped=$((skipped+1)); }
 
 # A timestamp-unique derivation so the server is forced to build (not just
 # substitute from cache.nixos.org).
@@ -100,10 +102,42 @@ if [ -n "$OUT" ] && [ -e "$OUT" ]; then
     fi
 fi
 
+section "7. cross-architecture build via binfmt (optional)"
+if [ -z "${VERIFY_PLATFORMS:-}" ]; then
+    skip "VERIFY_PLATFORMS unset — set it (e.g. 'aarch64-linux') to exercise binfmt"
+else
+    # A foreign-arch derivation needs a foreign-arch builder binary, so
+    # unlike the steps above this one cannot use a bare `derivation` with
+    # /bin/sh — it has to come from nixpkgs.  The base image subscribes
+    # the channel but never unpacks it, so fetch it now.  Only the *source*
+    # is needed here (we evaluate, the server builds), but it is ~640 MB,
+    # which is why this step is opt-in rather than part of the six.
+    echo "      fetching nixpkgs channel (needed to express a foreign-arch drv)"
+    nix-channel --update >/dev/null 2>&1 || true
+
+    for platform in $VERIFY_PLATFORMS; do
+        arch="${platform%%-*}"
+        EXPR_X="(import <nixpkgs> { system = \"$platform\"; }).runCommand
+                  \"nix-cache-builder-xarch-${arch}-$TS\" {} \"uname -m > \$out\""
+        if OUT_X=$(nix-build -E "$EXPR_X" --no-out-link 2>/tmp/xbuild.log); then
+            GOT=$(cat "$OUT_X" 2>/dev/null)
+            if [ "$GOT" = "$arch" ]; then
+                ok "$platform built on the server, uname -m = $GOT"
+            else
+                fail "$platform built but reported '$GOT' (expected '$arch')"
+            fi
+        else
+            fail "$platform build failed"
+            sed 's/^/      /' /tmp/xbuild.log
+        fi
+    done
+fi
+
 echo
 echo "==============================="
-echo "  passed: $passed"
-echo "  failed: $failed"
+echo "  passed:  $passed"
+echo "  failed:  $failed"
+echo "  skipped: $skipped"
 echo "==============================="
 if [ "$failed" -ne 0 ]; then
     echo "VERIFICATION FAILED"
