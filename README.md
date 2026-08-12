@@ -192,13 +192,33 @@ them under qemu-user emulation.  Two independent things have to line up:
    foreign derivation up front (`platform mismatch`) unless the platform
    is declared.  Nix does *not* infer this from binfmt_misc.
 
+Put the platform list in `.env` next to `docker-compose.yml`:
+
+```sh
+EXTRA_PLATFORMS=aarch64-linux
+```
+
+then:
+
 ```sh
 # 1. register handlers (privileged, one-shot, exits immediately)
 docker compose --profile binfmt up binfmt
 
-# 2. tell the builder it may accept them
-EXTRA_PLATFORMS=aarch64-linux docker compose up -d nix-builder
+# 2. start the builder
+docker compose up -d --force-recreate nix-builder
 ```
+
+Use `.env` rather than a one-off `EXTRA_PLATFORMS=… docker compose up`.
+The variable has to be present on *every* compose invocation that touches
+`nix-builder`, and that includes `docker compose run --rm verifier`,
+which brings its `depends_on` up and will happily recreate the builder
+with an empty `EXTRA_PLATFORMS` — silently undoing step 2.  `.env` is
+read every time, so it cannot drift.
+
+`--force-recreate` matters for the same family of reasons: compose reuses
+an already-running container with the same name, so without it a builder
+started earlier keeps its old environment and every cross build fails
+with `platform mismatch` while `docker compose config` *looks* correct.
 
 Register more than one arch, or undo it:
 
@@ -227,26 +247,40 @@ binary cache when the image was built can be reported at all; in
 practice that is `aarch64-linux`, and anything else is reported as
 unverified rather than as broken.
 
-#### Rootless podman cannot do this
+#### Registering needs real privilege; using it does not
 
-Since Linux 6.7 binfmt_misc is scoped per mount instance and per user
-namespace.  Two consequences, both verified the hard way:
+Two separate questions, and only the first is restricted:
 
-- A container that mounts its own `binfmt_misc` gets a private instance
-  whose registrations die with the container.  The `binfmt` service
-  therefore needs the host's instance bind-mounted in, which is what the
-  compose service does.
-- **A rootless container does not inherit the host's registrations at
-  all.**  The same arm64 image that prints `aarch64` under rootful
-  Docker/podman fails with `Exec format error` under rootless podman.
+- **Registering** writes to the host kernel's binfmt_misc table, which
+  needs `CAP_SYS_ADMIN` in the *initial* user namespace.  Rootless
+  podman never has that, so `docker compose --profile binfmt up binfmt`
+  works under real Docker and rootful podman but not rootless.  On a
+  rootless-podman host, run that one command with `sudo podman` (or any
+  privileged equivalent) — it is one-shot and exits immediately.
+- **Using** the handlers afterwards works from any container, rootless
+  included.
 
-So this feature works under real Docker and rootful podman (including
-CI), and cannot be made to work from inside the project on a
-rootless-podman host.  The boot-time report above is what tells you
-which situation you are in — trust it over the fact that registration
-appeared to succeed.
+Two things have to be right for that second part to hold, and the
+compose file already does both:
 
-To exercise the whole path end to end:
+- The host's `binfmt_misc` instance must be bind-mounted into the
+  registrar.  Since Linux 6.7 binfmt_misc is scoped per mount instance,
+  so a container that mounts its own gets a private table that dies with
+  it — the registration reports success and changes nothing.
+- The emulators must be staged on a **host** path (`/run/binfmt`) before
+  registering.  The `F` flag makes the kernel hold the interpreter open,
+  but a file description pointing into the registrar's own filesystem is
+  unusable from a rootless container's user namespace.  Measured: same
+  kernel, same registration — interpreter inside the container gives
+  `Exec format error` in every rootless container; interpreter under a
+  host-mounted `/run/binfmt` gives `aarch64`.
+
+Both are tmpfs/kernel state, so everything above is gone after a reboot
+and has to be re-run.  When in doubt, trust the boot-time report over
+the fact that registration appeared to succeed.
+
+To exercise the whole path end to end (with `EXTRA_PLATFORMS` in `.env`
+as above):
 
 ```sh
 VERIFY_PLATFORMS=aarch64-linux docker compose run --rm verifier

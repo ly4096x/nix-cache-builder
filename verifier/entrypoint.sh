@@ -39,6 +39,16 @@ ssh-keyscan -p "$SERVER_SSH_PORT" -H "$SERVER_HOST" > /root/.ssh/known_hosts 2>/
 PUB_KEY="$(tr -d '\n' < "$KEY_DIR/cache-pub-key.pem")"
 export PUB_KEY
 
+# Systems we will offer the builder.  This list is the client-side gate:
+# nix never even offers a derivation whose system is absent here, so
+# verify.sh's cross-architecture step needs VERIFY_PLATFORMS folded in
+# (comma-separated in the builders spec).  The mirror of this on a real
+# client is nix.buildMachines.*.systems.
+BUILDER_SYSTEMS=x86_64-linux
+for platform in ${VERIFY_PLATFORMS:-}; do
+    BUILDER_SYSTEMS="$BUILDER_SYSTEMS,$platform"
+done
+
 mkdir -p /etc/nix
 cat > /etc/nix/nix.conf <<EOF
 experimental-features = nix-command flakes
@@ -53,7 +63,7 @@ narinfo-cache-negative-ttl = 0
 # Force every build to go through the remote builder (max-jobs=0 means we
 # never build locally).  Builder spec is space-delimited:
 #   uri  systems  ssh-key  max-jobs  speed-factor  supported-features
-builders = ssh-ng://nixbuild@$SERVER_HOST x86_64-linux /root/.ssh/id_ed25519 4 1 kvm,big-parallel
+builders = ssh-ng://nixbuild@$SERVER_HOST $BUILDER_SYSTEMS /root/.ssh/id_ed25519 4 1 kvm,big-parallel
 builders-use-substitutes = true
 max-jobs = 0
 EOF

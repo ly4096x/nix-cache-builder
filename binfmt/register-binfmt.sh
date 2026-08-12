@@ -7,13 +7,21 @@
 # (fix-binary) flag — the kernel opens the interpreter at *registration*
 # time and keeps that file description forever.  Consequences:
 #
-#   - the interpreter path only has to be valid inside THIS container,
-#     at the moment we write to /proc/sys/fs/binfmt_misc/register
 #   - the nix-builder container needs no qemu of its own, and no
 #     bind-mount of the interpreter
 #   - nix's build sandbox needs no extra-sandbox-paths entry for qemu
 #     (this is why NixOS' own binfmt module only adds /run/binfmt to the
 #     sandbox when fixBinary is off)
+#
+# The F flag does NOT, however, make the interpreter's location
+# irrelevant.  Staging it inside this container's own filesystem
+# produces handlers that work from the host and from rootful containers
+# but fail with "Exec format error" in a *rootless* one — the held file
+# description points into an overlay that a nested user namespace cannot
+# use.  Measured directly: same registration, same kernel, interpreter
+# under /usr/local/bin -> rootless fails; interpreter under a
+# host-mounted /run/binfmt -> rootless prints aarch64.  So we copy the
+# emulator to INTERP_DIR, which must be a bind mount from the host.
 #
 # binfmt_misc is global to the kernel, not per-namespace, so registering
 # here affects the whole host.  That is the point: it is what lets an
@@ -75,6 +83,10 @@ mask_for() {
 
 PLATFORMS="${PLATFORMS:-aarch64-linux}"
 UNREGISTER="${UNREGISTER:-}"
+# Where the emulators are staged so the kernel's held file description
+# stays usable from every container, rootless included.  Must be a bind
+# mount from the host; see the header.
+INTERP_DIR="${INTERP_DIR:-/run/binfmt}"
 
 # binfmt_misc is a filesystem that has to be mounted before the control
 # files exist.  On most hosts systemd has already done it; inside a
@@ -108,6 +120,16 @@ if [ -n "$UNREGISTER" ]; then
     exit 0
 fi
 
+mkdir -p "$INTERP_DIR"
+if ! mountpoint -q "$INTERP_DIR"; then
+    echo "[binfmt] WARNING: $INTERP_DIR is not a mount point, so the emulators"
+    echo "[binfmt]          are being staged inside this container.  Handlers"
+    echo "[binfmt]          will work from the host and rootful containers but"
+    echo "[binfmt]          fail with 'Exec format error' in rootless ones."
+    echo "[binfmt]          Bind-mount a host directory there (docker-compose.yml"
+    echo "[binfmt]          already does: -v /run/binfmt:/run/binfmt)."
+fi
+
 registered=0
 for system in $PLATFORMS; do
     qemu=$(qemu_for "$system")
@@ -119,11 +141,16 @@ for system in $PLATFORMS; do
         exit 1
     fi
 
-    interp="/usr/local/bin/$qemu"
-    if [ ! -x "$interp" ]; then
-        echo "[binfmt] ERROR: $interp missing from this image" >&2
+    src="/usr/local/bin/$qemu"
+    if [ ! -x "$src" ]; then
+        echo "[binfmt] ERROR: $src missing from this image" >&2
         exit 1
     fi
+
+    # Stage onto the host-visible path before registering, so the fd the
+    # kernel keeps is reachable from rootless containers too.
+    interp="$INTERP_DIR/$qemu"
+    install -D -m 0755 "$src" "$interp"
 
     # Already there and enabled?  Re-registering the same name is an
     # EEXIST error, so make the common `up` path idempotent.

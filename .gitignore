@@ -1,2 +1,5 @@
 .claude/
 TODO.md
+# Local operator config (EXTRA_PLATFORMS, AUTHORIZED_KEYS, ...) that
+# compose reads on every invocation.  Deployment-specific, not ours.
+.env
